@@ -1,23 +1,29 @@
 let original_termios = Unix.tcgetattr Unix.stdin
+let textboxx_version = "0.0.1"
 
 type editor_config =
   { termios : Unix.terminal_io
-  ; mutable screen_rows : int (* ; mutable screen_cols : int *)
+  ; mutable cx : int
+  ; mutable cy : int
+  ; mutable screen_rows : int
+  ; mutable screen_cols : int
   }
 
 let () = Out_channel.set_buffered Out_channel.stdout true
-let editor_config = { termios = original_termios; screen_rows = 0 }
+
+let editor_config =
+  { termios = original_termios; cx = 0; cy = 0; screen_rows = 0; screen_cols = 0 }
+;;
 
 let getWindowSize () =
   let stty_cmd = Unix.open_process_args_in "stty" [| "stty"; "size" |] in
   let get_stty_cmd = In_channel.input_all stty_cmd in
   let stty_cmd_split = String.split_on_char ' ' get_stty_cmd in
-  let rows = int_of_string (List.nth stty_cmd_split 0) in
-  (* let cols = int_of_string (List.nth stty_cmd_split 1) in *)
-  editor_config.screen_rows <- rows
+  let rows = int_of_string (String.trim (List.nth stty_cmd_split 0)) in
+  let cols = int_of_string (String.trim (List.nth stty_cmd_split 1)) in
+  editor_config.screen_rows <- rows;
+  editor_config.screen_cols <- cols
 ;;
-
-(* editor_config.screen_cols <- cols *)
 
 (* module Editor_config : Editor_config = struct *)
 
@@ -38,42 +44,100 @@ let editor_read_key () =
 
 let editor_draw_rows () =
   let rec draw y =
+    let open Out_channel in
     let max = editor_config.screen_rows in
     if y = max
     then ()
+    else if y = editor_config.screen_rows / 3
+    then (
+      let welcome_str = Printf.sprintf "Textboxx <version %s>" textboxx_version in
+      let welcome_str_match =
+        match String.length welcome_str > editor_config.screen_cols with
+        | false -> welcome_str
+        | true -> String.sub welcome_str 1 editor_config.screen_cols
+      in
+      let padding =
+        ref ((editor_config.screen_cols - String.length welcome_str_match) / 2)
+      in
+      if !padding != 0
+      then (
+        output_string stdout "~";
+        output_string stdout "\x1b[K";
+        padding := !padding - 1)
+      else ();
+      while !padding != 0 do
+        output_string stdout " ";
+        padding := !padding - 1
+      done;
+      output_string stdout welcome_str_match;
+      output_string stdout "\x1b[K";
+      output_string stdout "\r\n";
+      draw (y + 1))
     else if y = editor_config.screen_rows - 1
     then (
-      Out_channel.output_string Out_channel.stdout "~";
-      Out_channel.output_string Out_channel.stdout "\x1b[K")
+      output_string stdout "~";
+      output_string stdout "\x1b[K")
     else (
-      Out_channel.output_string Out_channel.stdout "~\r\n";
-      Out_channel.output_string Out_channel.stdout "\x1b[K";
+      output_string stdout "\x1b[K";
+      output_string stdout "~\r\n";
       draw (y + 1))
   in
   draw 0
 ;;
 
+let editor_update_cursor () =
+  let cursor_pos = Printf.sprintf "\x1b[%d;%dH" editor_config.cy editor_config.cx in
+  Out_channel.output_string Out_channel.stdout cursor_pos;
+  Out_channel.flush Out_channel.stdout
+;;
+
 let editor_refresh_screen () =
-  Out_channel.output_string Out_channel.stdout "\x1b[?25l";
-  Out_channel.output_string Out_channel.stdout "\x1b[H";
+  let open Out_channel in
+  output_string stdout "\x1b[H";
   editor_draw_rows ();
-  Out_channel.output_string Out_channel.stdout "\x1b[H";
-  Out_channel.output_string Out_channel.stdout "\x1b[?25h"
+  editor_update_cursor ();
+  output_string stdout "\x1b[H";
+  output_string stdout "\x1b[?25h";
+  flush stdout
+;;
+
+let editor_move_cursor = function
+  | 'a' -> editor_config.cx <- editor_config.cx - 1
+  | 'd' -> editor_config.cx <- editor_config.cx + 1
+  | 'w' -> editor_config.cy <- editor_config.cy - 1
+  | 's' -> editor_config.cy <- editor_config.cy + 1
+  | _ -> ()
 ;;
 
 let editor_process_keypresses () =
   let rec input () =
     match editor_read_key () with
     | None ->
-      (* Printf.printf "%c\r\n" '0'; *)
       Out_channel.flush Out_channel.stdout;
       input ()
     | Some c ->
-      (* if is_ctrl c *)
-      (* then Printf.printf "%d\r\n" (Char.code c) *)
-      (* else Printf.printf "%d ('%c')\r\n" (Char.code c) c; *)
       Out_channel.flush Out_channel.stdout;
-      if int_of_char c = ctrl_key 'q' then editor_refresh_screen () else input ()
+      if int_of_char c = ctrl_key 'q'
+      then editor_refresh_screen ()
+      else (
+        match c with
+        | 'w' ->
+          editor_move_cursor 'w';
+          editor_update_cursor ();
+          input ()
+        | 's' ->
+          editor_move_cursor 's';
+          editor_update_cursor ();
+          input ()
+        | 'a' ->
+          editor_move_cursor 'a';
+          editor_update_cursor ();
+          input ()
+        | 'd' ->
+          editor_move_cursor 'd';
+          editor_update_cursor ();
+          input ()
+        | _ -> ())
   in
   input ()
 ;;
@@ -104,10 +168,10 @@ let disable_raw_mode () =
 ;;
 
 let () =
+  (* Out_channel.flush Out_channel.stdout; *)
   getWindowSize ();
   enable_raw_mode ();
   editor_refresh_screen ();
   editor_process_keypresses ();
-  (* Out_channel.flush Out_channel.stdout; *)
   disable_raw_mode ()
 ;;
