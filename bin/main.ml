@@ -9,10 +9,23 @@ type editor_config =
   ; mutable screen_cols : int
   }
 
+(* type editor_keys =
+  | Arrow_left
+  | Arrow_right
+  | Arrow_up
+  | Arrow_down *)
+
+(* let editor_keys_map = function
+  | Arrow_left -> 1000
+  | Arrow_right -> 1001
+  | Arrow_up -> 1002
+  | Arrow_down -> 1003
+;;  *)
+
 let () = Out_channel.set_buffered Out_channel.stdout true
 
 let editor_config =
-  { termios = original_termios; cx = 0; cy = 0; screen_rows = 0; screen_cols = 0 }
+  { termios = original_termios; cx = 1; cy = 1; screen_rows = 0; screen_cols = 0 }
 ;;
 
 let getWindowSize () =
@@ -25,8 +38,6 @@ let getWindowSize () =
   editor_config.screen_cols <- cols
 ;;
 
-(* module Editor_config : Editor_config = struct *)
-
 (* let is_ctrl c = *)
 (*   let char_ascii = int_of_char c in *)
 (*   if char_ascii <= 31 || char_ascii = 127 then true else false *)
@@ -36,10 +47,30 @@ let ctrl_key c = int_of_char c land 0x1f
 
 let editor_read_key () =
   let stdin = In_channel.stdin in
-  let byte_seq = Bytes.make 1 '0' in
-  (* let init_char = Bytes.get byte_seq 0 in *)
+  let byte_seq = Bytes.create 1 in
   let input = In_channel.input stdin byte_seq 0 1 in
-  if input = 0 then None else Some (Bytes.get byte_seq 0)
+  if input = 0
+  then None
+  else (
+    match Some (Bytes.get byte_seq 0) with
+    | Some c ->
+      if c = '\x1b'
+      then (
+        let seq = Bytes.create 3 in
+        if In_channel.input stdin seq 0 1 != 1 || In_channel.input stdin seq 1 1 != 1
+        then Some '\x1b'
+        else (
+          match Bytes.get seq 0 = '[' with
+          | true ->
+            (match Bytes.get seq 1 with
+             | 'A' -> Some 'w'
+             | 'B' -> Some 's'
+             | 'C' -> Some 'd'
+             | 'D' -> Some 'a'
+             | _ -> Some '\x1b')
+          | false -> None))
+      else Some c
+    | None -> None)
 ;;
 
 let editor_draw_rows () =
@@ -102,10 +133,22 @@ let editor_refresh_screen () =
 ;;
 
 let editor_move_cursor = function
-  | 'a' -> editor_config.cx <- editor_config.cx - 1
-  | 'd' -> editor_config.cx <- editor_config.cx + 1
-  | 'w' -> editor_config.cy <- editor_config.cy - 1
-  | 's' -> editor_config.cy <- editor_config.cy + 1
+  | 'w' ->
+    if editor_config.cy != 0
+    then editor_config.cy <- editor_config.cy - 1
+    else editor_config.cy <- 1
+  | 's' ->
+    if editor_config.cy != editor_config.screen_rows
+    then editor_config.cy <- editor_config.cy + 1
+    else ()
+  | 'd' ->
+    if editor_config.cx != editor_config.screen_cols
+    then editor_config.cx <- editor_config.cx + 1
+    else ()
+  | 'a' ->
+    if editor_config.cx != 0
+    then editor_config.cx <- editor_config.cx - 1
+    else editor_config.cx <- 1
   | _ -> ()
 ;;
 
@@ -137,7 +180,7 @@ let editor_process_keypresses () =
           editor_move_cursor 'd';
           editor_update_cursor ();
           input ()
-        | _ -> ())
+        | _ -> input ())
   in
   input ()
 ;;
