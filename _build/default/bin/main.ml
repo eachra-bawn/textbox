@@ -2,8 +2,8 @@ let original_termios = Unix.tcgetattr Unix.stdin
 let textboxx_version = "0.0.1"
 
 type erow =
-  { mutable size : int
-  ; mutable chars : string
+  { size : int
+  ; chars : string
   }
 
 type editor_config =
@@ -13,7 +13,7 @@ type editor_config =
   ; mutable screen_rows : int
   ; mutable screen_cols : int
   ; mutable numrows : int
-  ; row : erow
+  ; mutable row : erow list
   }
 
 type editor_key =
@@ -58,11 +58,11 @@ let editor_config =
   ; screen_rows = 0
   ; screen_cols = 0
   ; numrows = 0
-  ; row = { size = 0; chars = "" }
+  ; row = []
   }
 ;;
 
-let getWindowSize () =
+let get_window_size () =
   let stty_cmd = Unix.open_process_args_in "stty" [| "stty"; "size" |] in
   let get_stty_cmd = In_channel.input_all stty_cmd in
   let stty_cmd_split = String.split_on_char ' ' get_stty_cmd in
@@ -72,17 +72,26 @@ let getWindowSize () =
   editor_config.screen_cols <- cols
 ;;
 
+let editor_append_row str =
+  let new_row = { size = String.length str; chars = str } in
+  editor_config.row <- new_row :: editor_config.row;
+  editor_config.numrows <- editor_config.numrows + 1
+;;
+
 let editor_open filename =
   let file = In_channel.open_bin filename in
-  let file_line =
-    match In_channel.input_line file with
-    | Some s -> s
-    | None -> raise (Invalid_argument "File name does not exist")
-  in
-  let linelen = String.length file_line in
-  editor_config.row.size <- linelen;
-  editor_config.row.chars <- file_line;
-  editor_config.numrows <- 1
+  let file_lines = In_channel.input_lines file in
+  let i = ref (List.length file_lines - 1) in
+  while !i >= 0 do
+    let current_line =
+      match List.nth file_lines !i with
+      | s -> s
+      | exception Failure _ -> raise (Failure "Tried to read line that doesn't exist")
+    in
+    editor_append_row current_line;
+    i := !i - 1
+  done;
+  In_channel.close file
 ;;
 
 let ctrl_key key = key land 0x1f
@@ -146,7 +155,7 @@ let editor_draw_rows () =
     let open Out_channel in
     if y = editor_config.screen_rows
     then ()
-    else if y >= editor_config.numrows
+    else if y > editor_config.numrows
     then
       if y = editor_config.screen_rows / 3 && editor_config.numrows = 0
       then (
@@ -182,10 +191,15 @@ let editor_draw_rows () =
         output_string stdout "~\r\n";
         draw (y + 1))
     else (
+      let current_line =
+        match y with
+        | 0 -> List.nth editor_config.row y
+        | _ -> List.nth editor_config.row (y - 1)
+      in
       let chars_trunc =
-        match editor_config.row.size > editor_config.screen_cols with
-        | true -> String.sub editor_config.row.chars 1 editor_config.screen_cols
-        | false -> editor_config.row.chars
+        match current_line.size > editor_config.screen_cols with
+        | true -> String.sub current_line.chars 1 editor_config.screen_cols
+        | false -> current_line.chars
       in
       output_string stdout chars_trunc;
       output_string stdout "\x1b[K";
@@ -314,7 +328,7 @@ let disable_raw_mode () =
 ;;
 
 let () =
-  getWindowSize ();
+  get_window_size ();
   enable_raw_mode ();
   if Array.length Sys.argv > 1 then editor_open Sys.argv.(1) else ();
   editor_refresh_screen ();
