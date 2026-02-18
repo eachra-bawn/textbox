@@ -10,6 +10,7 @@ type editor_config =
   { termios : Unix.terminal_io
   ; mutable cx : int
   ; mutable cy : int
+  ; mutable rowoff : int
   ; mutable screen_rows : int
   ; mutable screen_cols : int
   ; mutable numrows : int
@@ -49,12 +50,11 @@ let editor_key_to_int = function
   | Page_down -> 1008
 ;;
 
-let () = Out_channel.set_buffered Out_channel.stdout true
-
 let editor_config =
   { termios = original_termios
-  ; cx = 1
-  ; cy = 1
+  ; cx = 0
+  ; cy = 0
+  ; rowoff = 0
   ; screen_rows = 0
   ; screen_cols = 0
   ; numrows = 0
@@ -80,16 +80,16 @@ let editor_append_row str =
 
 let editor_open filename =
   let file = In_channel.open_bin filename in
-  let file_lines = In_channel.input_lines file in
-  let i = ref (List.length file_lines - 1) in
-  while !i >= 0 do
-    let current_line =
+  let file_lines = List.rev (In_channel.input_lines file) in
+  let i = ref 0 in
+  while !i <= List.length file_lines - 1 do
+    let file_line =
       match List.nth file_lines !i with
       | s -> s
-      | exception Failure _ -> raise (Failure "Tried to read line that doesn't exist")
+      | exception Invalid_argument _ -> raise (Invalid_argument "Wrong here!")
     in
-    editor_append_row current_line;
-    i := !i - 1
+    editor_append_row file_line;
+    i := !i + 1
   done;
   In_channel.close file
 ;;
@@ -153,9 +153,10 @@ let editor_read_key () =
 let editor_draw_rows () =
   let rec draw y =
     let open Out_channel in
-    if y = editor_config.screen_rows
+    let file_row = y + editor_config.rowoff in
+    if y + 1 = editor_config.screen_rows
     then ()
-    else if y > editor_config.numrows
+    else if file_row >= editor_config.numrows
     then
       if y = editor_config.screen_rows / 3 && editor_config.numrows = 0
       then (
@@ -191,10 +192,10 @@ let editor_draw_rows () =
         output_string stdout "~\r\n";
         draw (y + 1))
     else (
+      let debug_msg = Printf.sprintf "filerow: %d" file_row in
       let current_line =
-        match y with
-        | 0 -> List.nth editor_config.row y
-        | _ -> List.nth editor_config.row (y - 1)
+        try List.nth editor_config.row file_row with
+        | Invalid_argument _ -> raise (Invalid_argument debug_msg)
       in
       let chars_trunc =
         match current_line.size > editor_config.screen_cols with
@@ -210,7 +211,12 @@ let editor_draw_rows () =
 ;;
 
 let editor_update_cursor () =
-  let cursor_pos = Printf.sprintf "\x1b[%d;%dH" editor_config.cy editor_config.cx in
+  let cursor_pos =
+    Printf.sprintf
+      "\x1b[%d;%dH"
+      (editor_config.cy - editor_config.rowoff + 1)
+      (editor_config.cx + 1)
+  in
   Out_channel.output_string Out_channel.stdout cursor_pos;
   Out_channel.flush Out_channel.stdout
 ;;
@@ -225,22 +231,41 @@ let editor_refresh_screen () =
   flush stdout
 ;;
 
+let editor_scroll () =
+  if editor_config.cy < editor_config.rowoff
+  then (
+    editor_refresh_screen ();
+    editor_config.rowoff <- editor_config.cy)
+  else ();
+  if editor_config.cy >= editor_config.rowoff + editor_config.screen_rows
+  then (
+    (* Out_channel.output_string Out_channel.stdout "YOOO!!!";
+    Out_channel.flush Out_channel.stdout; *)
+    editor_config.rowoff <- editor_config.cy - editor_config.screen_rows + 1;
+    editor_refresh_screen ())
+  else ()
+;;
+
 let editor_move_cursor = function
   | Arrow_left ->
     if editor_config.cx != 0
     then editor_config.cx <- editor_config.cx - 1
-    else editor_config.cx <- 1
+    else editor_config.cx <- 0
   | Arrow_right ->
     if editor_config.cx != editor_config.screen_cols
     then editor_config.cx <- editor_config.cx + 1
     else ()
   | Arrow_up ->
     if editor_config.cy != 0
-    then editor_config.cy <- editor_config.cy - 1
-    else editor_config.cy <- 1
+    then (
+      editor_config.cy <- editor_config.cy - 1;
+      editor_scroll ())
+    else editor_config.cy <- 0
   | Arrow_down ->
-    if editor_config.cy != editor_config.screen_rows
-    then editor_config.cy <- editor_config.cy + 1
+    if editor_config.cy < editor_config.numrows
+    then (
+      editor_config.cy <- editor_config.cy + 1;
+      editor_scroll ())
     else ()
   | _ -> ()
 ;;
@@ -328,9 +353,9 @@ let disable_raw_mode () =
 ;;
 
 let () =
-  get_window_size ();
-  enable_raw_mode ();
   if Array.length Sys.argv > 1 then editor_open Sys.argv.(1) else ();
+  enable_raw_mode ();
+  get_window_size ();
   editor_refresh_screen ();
   editor_process_keypresses ();
   disable_raw_mode ()
