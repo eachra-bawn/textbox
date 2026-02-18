@@ -223,9 +223,9 @@ let editor_update_cursor () =
 
 let editor_refresh_screen () =
   let open Out_channel in
+  output_string stdout "\x1b[?25l";
   output_string stdout "\x1b[H";
   editor_draw_rows ();
-  editor_update_cursor ();
   output_string stdout "\x1b[H";
   output_string stdout "\x1b[?25h";
   flush stdout
@@ -239,8 +239,6 @@ let editor_scroll () =
   else ();
   if editor_config.cy >= editor_config.rowoff + editor_config.screen_rows
   then (
-    (* Out_channel.output_string Out_channel.stdout "YOOO!!!";
-    Out_channel.flush Out_channel.stdout; *)
     editor_config.rowoff <- editor_config.cy - editor_config.screen_rows + 1;
     editor_refresh_screen ())
   else ()
@@ -273,11 +271,8 @@ let editor_move_cursor = function
 let editor_process_keypresses () =
   let rec input () =
     match editor_read_key () with
-    | None ->
-      Out_channel.flush Out_channel.stdout;
-      input ()
+    | None -> input ()
     | Some key ->
-      Out_channel.flush Out_channel.stdout;
       if editor_key_to_int key = ctrl_key (editor_key_to_int key)
       then editor_refresh_screen ()
       else (
@@ -353,9 +348,9 @@ let disable_raw_mode () =
 ;;
 
 let () =
-  if Array.length Sys.argv > 1 then editor_open Sys.argv.(1) else ();
   enable_raw_mode ();
   get_window_size ();
+  if Array.length Sys.argv > 1 then editor_open Sys.argv.(1) else ();
   editor_refresh_screen ();
   editor_process_keypresses ();
   disable_raw_mode ()
