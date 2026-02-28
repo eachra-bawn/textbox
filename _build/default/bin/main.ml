@@ -11,6 +11,7 @@ type editor_config =
   ; mutable cx : int
   ; mutable cy : int
   ; mutable rowoff : int
+  ; mutable colloff : int
   ; mutable screen_rows : int
   ; mutable screen_cols : int
   ; mutable numrows : int
@@ -55,6 +56,7 @@ let editor_config =
   ; cx = 0
   ; cy = 0
   ; rowoff = 0
+  ; colloff = 0
   ; screen_rows = 0
   ; screen_cols = 0
   ; numrows = 0
@@ -154,7 +156,7 @@ let editor_draw_rows () =
   let rec draw y =
     let open Out_channel in
     let file_row = y + editor_config.rowoff in
-    if y + 1 = editor_config.screen_rows
+    if y = editor_config.screen_rows
     then ()
     else if file_row >= editor_config.numrows
     then
@@ -192,17 +194,39 @@ let editor_draw_rows () =
         output_string stdout "~\r\n";
         draw (y + 1))
     else (
-      let debug_msg = Printf.sprintf "filerow: %d" file_row in
       let current_line =
-        try List.nth editor_config.row file_row with
-        | Invalid_argument _ -> raise (Invalid_argument debug_msg)
+        match file_row with
+        | 0 -> List.nth editor_config.row file_row
+        | _ -> List.nth editor_config.row (file_row - 1)
       in
-      let chars_trunc =
-        match current_line.size > editor_config.screen_cols with
-        | true -> String.sub current_line.chars 1 editor_config.screen_cols
-        | false -> current_line.chars
+      let current_line_len =
+        if current_line.size - editor_config.colloff < 0
+        then 0
+        else current_line.size - editor_config.colloff
       in
-      output_string stdout chars_trunc;
+      let debug_msg =
+        Printf.sprintf
+          "file_row: %d, editor_config.colloff: %d, editor_config.screen_cols: %d \
+           current_line_len: %d"
+          file_row
+          editor_config.colloff
+          editor_config.screen_cols
+          current_line_len
+      in
+      let line_at_offset =
+        try
+          match current_line_len = 0 with
+          | true -> String.sub current_line.chars 0 current_line_len
+          | false -> String.sub current_line.chars editor_config.colloff current_line_len
+        with
+        | Invalid_argument _ -> failwith debug_msg
+      in
+      let line_truncated =
+        match current_line_len > editor_config.screen_cols with
+        | true -> String.sub line_at_offset 0 editor_config.screen_cols
+        | false -> line_at_offset
+      in
+      output_string stdout line_truncated;
       output_string stdout "\x1b[K";
       output_string stdout "\r\n";
       draw (y + 1))
@@ -215,7 +239,7 @@ let editor_update_cursor () =
     Printf.sprintf
       "\x1b[%d;%dH"
       (editor_config.cy - editor_config.rowoff + 1)
-      (editor_config.cx + 1)
+      (editor_config.cx - editor_config.colloff + 1)
   in
   Out_channel.output_string Out_channel.stdout cursor_pos;
   Out_channel.flush Out_channel.stdout
@@ -226,7 +250,6 @@ let editor_refresh_screen () =
   output_string stdout "\x1b[?25l";
   output_string stdout "\x1b[H";
   editor_draw_rows ();
-  (* editor_update_cursor (); *)
   output_string stdout "\x1b[H";
   output_string stdout "\x1b[?25h";
   flush stdout
@@ -235,25 +258,35 @@ let editor_refresh_screen () =
 let editor_scroll () =
   if editor_config.cy < editor_config.rowoff
   then (
-    editor_refresh_screen ();
-    editor_config.rowoff <- editor_config.cy)
-  else ();
-  if editor_config.cy >= editor_config.rowoff + editor_config.screen_rows
+    editor_config.rowoff <- editor_config.cy;
+    editor_refresh_screen ())
+  else if editor_config.cy >= editor_config.rowoff + editor_config.screen_rows
   then (
     editor_config.rowoff <- editor_config.cy - editor_config.screen_rows + 1;
     editor_refresh_screen ())
-  else ()
+  else ();
+  if editor_config.cx < editor_config.colloff
+  then (
+    editor_config.colloff <- editor_config.cx;
+    editor_refresh_screen ())
+  else if editor_config.cx >= editor_config.colloff + editor_config.screen_cols
+  then (
+    editor_config.colloff <- editor_config.cx - editor_config.screen_cols + 1;
+    editor_refresh_screen ())
 ;;
 
 let editor_move_cursor = function
   | Arrow_left ->
     if editor_config.cx != 0
-    then editor_config.cx <- editor_config.cx - 1
+    then (
+      editor_config.cx <- editor_config.cx - 1;
+      editor_scroll ())
     else editor_config.cx <- 0
   | Arrow_right ->
-    if editor_config.cx != editor_config.screen_cols
-    then editor_config.cx <- editor_config.cx + 1
-    else ()
+    (* if editor_config.cx != editor_config.screen_cols *)
+    (* then *)
+    editor_config.cx <- editor_config.cx + 1;
+    editor_scroll () (* else () *)
   | Arrow_up ->
     if editor_config.cy != 0
     then (
@@ -280,10 +313,12 @@ let editor_process_keypresses () =
         match key with
         | Home_key ->
           editor_config.cx <- 0;
+          editor_scroll ();
           editor_update_cursor ();
           input ()
         | End_key ->
           editor_config.cx <- editor_config.screen_cols - 1;
+          editor_scroll ();
           editor_update_cursor ();
           input ()
         | Page_up ->
