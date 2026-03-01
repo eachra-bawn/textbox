@@ -272,31 +272,51 @@ let editor_scroll () =
     editor_refresh_screen ())
 ;;
 
-let editor_move_cursor = function
-  | Arrow_left ->
-    if editor_config.cx != 0
-    then (
-      editor_config.cx <- editor_config.cx - 1;
-      editor_scroll ())
-    else editor_config.cx <- 0
-  | Arrow_right ->
-    (* if editor_config.cx != editor_config.screen_cols *)
-    (* then *)
-    editor_config.cx <- editor_config.cx + 1;
-    editor_scroll () (* else () *)
-  | Arrow_up ->
-    if editor_config.cy != 0
-    then (
-      editor_config.cy <- editor_config.cy - 1;
-      editor_scroll ())
-    else editor_config.cy <- 0
-  | Arrow_down ->
-    if editor_config.cy < editor_config.numrows
-    then (
-      editor_config.cy <- editor_config.cy + 1;
-      editor_scroll ())
-    else ()
-  | _ -> ()
+let editor_move_cursor editor_key =
+  let match_key =
+    match editor_key with
+    | Arrow_left ->
+      if editor_config.cx != 0
+      then (
+        editor_config.cx <- editor_config.cx - 1;
+        editor_scroll ())
+      else if editor_config.cy > 0
+      then (
+        editor_config.cy <- editor_config.cy - 1;
+        editor_config.cx <- (List.nth editor_config.row editor_config.cy).size;
+        editor_scroll ())
+      else editor_config.cx <- 0
+    | Arrow_right ->
+      let row = List.nth editor_config.row editor_config.cy in
+      let last_row_check = editor_config.cy <= editor_config.numrows in
+      if editor_config.cx > row.size then editor_config.cx <- row.size else ();
+      if last_row_check && editor_config.cx < row.size
+      then (
+        editor_config.cx <- editor_config.cx + 1;
+        editor_scroll ())
+      else if last_row_check && editor_config.cx = row.size
+      then (
+        editor_config.cy <- editor_config.cy + 1;
+        editor_config.cx <- 0;
+        editor_scroll ())
+      else ()
+    | Arrow_up ->
+      if editor_config.cy != 0
+      then (
+        editor_config.cy <- editor_config.cy - 1;
+        editor_scroll ())
+      else editor_config.cy <- 0
+    | Arrow_down ->
+      if editor_config.cy < editor_config.numrows
+      then (
+        editor_config.cy <- editor_config.cy + 1;
+        editor_scroll ())
+      else ()
+    | _ -> ()
+  in
+  match_key;
+  let row = List.nth editor_config.row editor_config.cy in
+  if editor_config.cx > row.size then editor_config.cx <- row.size else ()
 ;;
 
 let editor_process_keypresses () =

@@ -204,22 +204,19 @@ let editor_draw_rows () =
         then 0
         else current_line.size - editor_config.colloff
       in
-      let debug_msg =
-        Printf.sprintf
-          "file_row: %d, editor_config.colloff: %d, editor_config.screen_cols: %d \
-           current_line_len: %d"
-          file_row
-          editor_config.colloff
-          editor_config.screen_cols
-          current_line_len
-      in
+      (* let debug_msg = *)
+      (*   Printf.sprintf *)
+      (*     "file_row: %d, editor_config.colloff: %d, editor_config.screen_cols: %d \ *)
+      (*      current_line_len: %d" *)
+      (*     file_row *)
+      (*     editor_config.colloff *)
+      (*     editor_config.screen_cols *)
+      (*     current_line_len *)
+      (* in *)
       let line_at_offset =
-        try
-          match current_line_len = 0 with
-          | true -> String.sub current_line.chars 0 current_line_len
-          | false -> String.sub current_line.chars editor_config.colloff current_line_len
-        with
-        | Invalid_argument _ -> failwith debug_msg
+        match current_line_len = 0 with
+        | true -> String.sub current_line.chars 0 current_line_len
+        | false -> String.sub current_line.chars editor_config.colloff current_line_len
       in
       let line_truncated =
         match current_line_len > editor_config.screen_cols with
@@ -275,31 +272,51 @@ let editor_scroll () =
     editor_refresh_screen ())
 ;;
 
-let editor_move_cursor = function
-  | Arrow_left ->
-    if editor_config.cx != 0
-    then (
-      editor_config.cx <- editor_config.cx - 1;
-      editor_scroll ())
-    else editor_config.cx <- 0
-  | Arrow_right ->
-    (* if editor_config.cx != editor_config.screen_cols *)
-    (* then *)
-    editor_config.cx <- editor_config.cx + 1;
-    editor_scroll () (* else () *)
-  | Arrow_up ->
-    if editor_config.cy != 0
-    then (
-      editor_config.cy <- editor_config.cy - 1;
-      editor_scroll ())
-    else editor_config.cy <- 0
-  | Arrow_down ->
-    if editor_config.cy < editor_config.numrows
-    then (
-      editor_config.cy <- editor_config.cy + 1;
-      editor_scroll ())
-    else ()
-  | _ -> ()
+let editor_move_cursor editor_key =
+  let match_key =
+    match editor_key with
+    | Arrow_left ->
+      if editor_config.cx != 0
+      then (
+        editor_config.cx <- editor_config.cx - 1;
+        editor_scroll ())
+      else if editor_config.cy > 0
+      then (
+        editor_config.cy <- editor_config.cy - 1;
+        editor_config.cx <- (List.nth editor_config.row editor_config.cy).size;
+        editor_scroll ())
+      else editor_config.cx <- 0
+    | Arrow_right ->
+      let row = List.nth editor_config.row editor_config.cy in
+      let last_row_check = editor_config.cy <= editor_config.numrows in
+      if editor_config.cx > row.size then editor_config.cx <- row.size else ();
+      if last_row_check && editor_config.cx < row.size
+      then (
+        editor_config.cx <- editor_config.cx + 1;
+        editor_scroll ())
+      else if last_row_check && editor_config.cx = row.size
+      then (
+        editor_config.cy <- editor_config.cy + 1;
+        editor_config.cx <- 0;
+        editor_scroll ())
+      else ()
+    | Arrow_up ->
+      if editor_config.cy != 0
+      then (
+        editor_config.cy <- editor_config.cy - 1;
+        editor_scroll ())
+      else editor_config.cy <- 0
+    | Arrow_down ->
+      if editor_config.cy < editor_config.numrows
+      then (
+        editor_config.cy <- editor_config.cy + 1;
+        editor_scroll ())
+      else ()
+    | _ -> ()
+  in
+  match_key;
+  let row = List.nth editor_config.row editor_config.cy in
+  if editor_config.cx > row.size then editor_config.cx <- row.size else ()
 ;;
 
 let editor_process_keypresses () =
